@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://dataforlibs.github.io/ukrainian-collections-app/sitemap.xml
