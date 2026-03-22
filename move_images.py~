@@ -1,0 +1,112 @@
+import os
+import shutil
+from pathlib import Path
+
+
+def move_files_to_folders(source_dir: str, dest_base_dir: str, num_folders: int = 4) -> dict:
+    """
+    Distribute all files from source_dir evenly across numbered subfolders.
+
+    Args:
+        source_dir:    Path to the source directory containing all files
+        dest_base_dir: Base path where numbered folders will be created
+        num_folders:   Number of destination folders (default: 4)
+
+    Returns:
+        A summary dict with per-folder counts and any failures
+    """
+    source = Path(source_dir)
+    dest_base = Path(dest_base_dir)
+
+    if not source.exists() or not source.is_dir():
+        raise FileNotFoundError(f"Source directory not found: {source}")
+
+    # Collect all files
+    files = sorted([f for f in source.iterdir() if f.is_file()])
+    total = len(files)
+
+    if total == 0:
+        print("No files found in source directory.")
+        return {}
+
+    # Create destination folders 1, 2, 3, 4
+    folders = []
+    for i in range(1, num_folders + 1):
+        folder = dest_base / str(i)
+        folder.mkdir(parents=True, exist_ok=True)
+        folders.append(folder)
+
+    batch_size = -(-total // num_folders)  # Ceiling division — last folder may get fewer
+    print(f"Total files : {total:,}")
+    print(f"Folders     : {num_folders}  ({folders[0].parent})")
+    print(f"Batch size  : ~{batch_size:,} files per folder\n")
+
+    summary = {str(i): {"moved": 0, "failed": []} for i in range(1, num_folders + 1)}
+    failed_total = []
+
+    for idx, file in enumerate(files):
+        folder_index = idx // batch_size          # 0-based bucket
+        folder_index = min(folder_index, num_folders - 1)  # Safety clamp
+        target_folder = folders[folder_index]
+        folder_label = str(folder_index + 1)
+        target = target_folder / file.name
+
+        # Handle naming conflicts
+        if target.exists():
+            stem, suffix = file.stem, file.suffix
+            target = target_folder / f"{stem}_{idx}{suffix}"
+
+        try:
+            shutil.move(str(file), str(target))
+            summary[folder_label]["moved"] += 1
+        except Exception as e:
+            summary[folder_label]["failed"].append((file.name, str(e)))
+            failed_total.append(file.name)
+
+        # Progress indicator every 500 files
+        if (idx + 1) % 500 == 0 or (idx + 1) == total:
+            print(f"  Progress: {idx + 1:,} / {total:,} files processed...")
+
+    # Summary
+    print(f"\n{'─' * 45}")
+    print(f"  {'Folder':<10} {'Moved':>8} {'Failed':>8}")
+    print(f"{'─' * 45}")
+    for label, data in summary.items():
+        print(f"  Folder {label:<5} {data['moved']:>8,} {len(data['failed']):>8}")
+    print(f"{'─' * 45}")
+    print(f"  {'TOTAL':<10} {total - len(failed_total):>8,} {len(failed_total):>8}")
+    print(f"{'─' * 45}")
+
+    if failed_total:
+        print(f"\n  Failed files: {failed_total}")
+
+    return summary
+
+
+if __name__ == "__main__":
+    SOURCE = "/Users/necsi/Documents/ukrainian-collections-app/public"   # ← change this
+    DEST_BASE = "/Users/necsi/Documents/hermitage"    # ← folders 1,2,3,4 will be created here
+
+    move_files_to_folders(SOURCE, DEST_BASE, num_folders=4)
+
+'''
+Total files : 8,000
+Folders     : 4  (/path/to/destination)
+Batch size  : ~2,000 files per folder
+
+  Progress: 500 / 8,000 files processed...
+  Progress: 1,000 / 8,000 files processed...
+  ...
+  Progress: 8,000 / 8,000 files processed...
+
+─────────────────────────────────────────────
+  Folder       Moved   Failed
+─────────────────────────────────────────────
+  Folder 1     2,000        0
+  Folder 2     2,000        0
+  Folder 3     2,000        0
+  Folder 4     2,000        0
+─────────────────────────────────────────────
+  TOTAL        8,000        0
+─────────────────────────────────────────────
+'''
