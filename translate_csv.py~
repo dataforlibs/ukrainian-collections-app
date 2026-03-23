@@ -1,0 +1,145 @@
+"""
+Translates Название, Место создания, Место находки columns from Russian to Ukrainian
+using Claude Haiku 3.5 via the Batch API (50% discount, results within 24h).
+
+Usage:
+    pip install anthropic pandas
+    export ANTHROPIC_API_KEY=your_key_here
+    python translate_csv.py
+
+Output: combined_database_translated.csv with 3 new columns:
+    - Назва_uk        (Название → Ukrainian)
+    - Місце_створення_uk  (Место создания → Ukrainian)
+    - Місце_знахідки_uk   (Место находки → Ukrainian)
+"""
+
+import os
+import json
+import time
+import anthropic
+import pandas as pd
+
+# ── Config ────────────────────────────────────────────────────────────────────
+INPUT_CSV  = "combined_database.csv"
+OUTPUT_CSV = "combined_database_translated.csv"
+BATCH_SIZE = 50          # rows per API call
+MODEL      = "claude-haiku-4-5-20251001"  # Haiku 3.5 — cheapest good quality
+
+FIELDS = {
+    "Название":       "Назва_uk",
+    "Место создания": "Місце_створення_uk",
+    "Место находки":  "Місце_знахідки_uk",
+}
+
+SYSTEM_PROMPT = """You are a precise translator from Russian to Ukrainian for museum artifact metadata.
+Translate the given JSON object. Keep all field names exactly as-is.
+Translate only the values. If a value is empty, null, or not meaningful text, return it unchanged.
+Preserve numbers, dates, abbreviations, and proper nouns where appropriate.
+Return ONLY valid JSON, no extra text."""
+
+client = anthropic.Anthropic(api_key=os.environ["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"])
+
+# ── Load data ─────────────────────────────────────────────────────────────────
+print(f"Loading {INPUT_CSV}...")
+df = pd.read_csv(INPUT_CSV, dtype=str)
+print(f"Loaded {len(df):,} rows.")
+
+# Add output columns (empty for now)
+for col_uk in FIELDS.values():
+    df[col_uk] = ""
+
+# ── Build batch requests ──────────────────────────────────────────────────────
+def make_request(batch_rows: list[dict], start_idx: int) -> dict:
+    """Create one batch request item for a group of rows."""
+    payload = {str(start_idx + i): {k: str(row.get(k, "") or "") for k in FIELDS}
+               for i, row in enumerate(batch_rows)}
+    return {
+        "custom_id": f"batch_{start_idx}",
+        "params": {
+            "model": MODEL,
+            "max_tokens": 1024,
+            "system": SYSTEM_PROMPT,
+            "messages": [
+                {"role": "user",
+                 "content": f"Translate these Russian museum metadata values to Ukrainian:\n{json.dumps(payload, ensure_ascii=False)}"}
+            ]
+        }
+    }
+
+requests = []
+for i in range(0, len(df), BATCH_SIZE):
+    chunk = df.iloc[i:i + BATCH_SIZE].to_dict("records")
+    requests.append(make_request(chunk, i))
+
+print(f"Built {len(requests):,} batch requests ({BATCH_SIZE} rows each).")
+
+# ── Cost estimate ─────────────────────────────────────────────────────────────
+# Rough estimate before submitting
+est_input_tokens  = len(requests) * 2_600   # ~2600 input tokens per batch
+est_output_tokens = len(requests) * 2_500   # ~2500 output tokens per batch
+est_cost_standard = (est_input_tokens / 1e6 * 0.80) + (est_output_tokens / 1e6 * 4.00)
+est_cost_batch    = est_cost_standard * 0.50
+
+print(f"\nCost estimate:")
+print(f"  Standard API: ~${est_cost_standard:.2f}")
+print(f"  Batch API:    ~${est_cost_batch:.2f}  ← using this")
+print()
+
+# ── Submit batch ──────────────────────────────────────────────────────────────
+print("Submitting batch to Anthropic... (results ready within 24h)")
+batch = client.messages.batches.create(requests=requests)
+batch_id = batch.id
+print(f"Batch ID: {batch_id}")
+print(f"Save this ID! You will need it to retrieve results.")
+print()
+
+# Save batch ID for retrieval later
+with open("batch_id.txt", "w") as f:
+    f.write(batch_id)
+print("Batch ID saved to batch_id.txt")
+
+# ── Optional: poll and wait (comment out if you want to run retrieval separately) ──
+print("Polling for completion (Ctrl+C to stop and retrieve later)...")
+while True:
+    status = client.messages.batches.retrieve(batch_id)
+    counts = status.request_counts
+    done   = counts.succeeded + counts.errored + counts.canceled
+    total  = done + counts.processing
+    print(f"  Status: {status.processing_status} | "
+          f"Succeeded: {counts.succeeded} | "
+          f"Processing: {counts.processing} | "
+          f"Errors: {counts.errored}")
+
+    if status.processing_status == "ended":
+        break
+    time.sleep(60)  # check every minute
+
+# ── Retrieve and apply results ────────────────────────────────────────────────
+print("\nRetrieving results...")
+results = {}
+for result in client.messages.batches.results(batch_id):
+    if result.result.type != "succeeded":
+        print(f"  Warning: {result.custom_id} failed — {result.result.type}")
+        continue
+    raw_text = result.result.message.content[0].text.strip()
+    # Strip any markdown fences Claude might add
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("\n", 1)[1].rsplit("```", 1)[0]
+    try:
+        translated = json.loads(raw_text)
+        results[result.custom_id] = translated
+    except json.JSONDecodeError as e:
+        print(f"  JSON parse error for {result.custom_id}: {e}")
+
+# Apply translations back to dataframe
+for custom_id, translations in results.items():
+    start_idx = int(custom_id.split("_")[1])
+    for str_idx, row_translations in translations.items():
+        idx = int(str_idx)
+        for ru_col, uk_col in FIELDS.items():
+            df.at[idx, uk_col] = row_translations.get(ru_col, "")
+
+# ── Save output ───────────────────────────────────────────────────────────────
+df.to_csv(OUTPUT_CSV, index=False)
+print(f"\nDone! Saved to {OUTPUT_CSV}")
+print(f"New columns added: {list(FIELDS.values())}")
