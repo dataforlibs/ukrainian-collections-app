@@ -1,9 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+
+  <!-- Homepage -->
   <url>
     <loc>https://dataforlibs.github.io/ukrainian-collections-app/</loc>
-    <lastmod>2026-03-19</lastmod>
+    <lastmod>2025-03-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>1.0</priority>
+    <xhtml:link rel="alternate" hreflang="uk"
+      href="https://dataforlibs.github.io/ukrainian-collections-app/" />
+    <xhtml:link rel="alternate" hreflang="en"
+      href="https://dataforlibs.github.io/ukrainian-collections-app/" />
   </url>
+
+  <!-- Methods note -->
+  <url>
+    <loc>https://dataforlibs.github.io/ukrainian-collections-app/methods</loc>
+    <lastmod>2025-03-01</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
+  </url>
+
+  <!--
+    Individual artifact URLs will be added here dynamically.
+    Run the script below to regenerate this sitemap with all artifact IDs:
+
+    node scripts/generate-sitemap.js > public/sitemap.xml
+
+    Or see the generate-sitemap.js script included in this delivery.
+  -->
+
 </urlset>
